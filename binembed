@@ -1,0 +1,116 @@
+#!/bin/sh
+# Converts files to object files using objcopy, generates a header
+# file with a definition for each resource in the archive
+#
+# Copyright (c) 2024 Erik Tagirov
+# See LICENSE.txt for details
+
+pr_usage() {
+	echo "Usage: binembed [-o archive] [-h header] files"
+}
+
+args=`getopt h:o: $*`
+set -- $args
+
+while test $# -ne 0
+do
+	case "$1"
+	in
+		-o)
+			archive_path="$2"
+			shift
+			shift
+			;;
+		-h)
+			header="$2"
+			shift
+			shift
+			;;
+		--)
+			shift
+			break
+			;;
+	esac
+done
+
+if test $# -eq 0
+then
+	pr_usage
+	exit 1
+fi
+
+for src in $@
+do
+	if test -d $src
+	then
+		resources="$resources `find $src -type f`"
+	elif test -f $src
+	then
+		resources="$resources $src"
+	else
+		echo "$src is not a valid file or directory"
+		exit 1
+	fi
+done
+
+resources=`echo $resources | sed 's/^ //g'`
+workdir=`mktemp -d`
+symbols=$workdir/symbols
+header=${header=resources.h}
+archive_path=${archive_path=resources.a}
+
+if test -f $archive_path
+then
+	rm $archive_path
+fi
+
+trap 'rm -rf $workdir; exit 1' 1 2 15
+mkdir $workdir/resources
+>$symbols
+
+
+cat <<EOF >$header
+struct resource {
+	char *data;
+	char *path;
+	uint32_t size;
+};
+EOF
+
+IFS=' '
+
+for resource in $resources
+do
+	if test `du "$resource" | awk '{print $1}'` -gt 0
+	then
+		echo "packing: $resource"
+		objname=`echo "$resource" | sed 's/\//_/g' | awk -F '.' '{print $1}'`
+
+		# Target arch can be set manually if needed
+		obj="$workdir/resources/$objname.o"
+		objcopy -I binary -O elf64-x86-64 -B i386 "$resource" $obj
+
+		echo "/* $resource */" >> $header
+
+		sym=`nm "$obj" | awk '{print $3}' | egrep -v '_size\$|_end\$'`
+		echo "extern char $sym[];" >> $header
+		printf "$sym," >> $symbols
+
+		printf "\"$resource\"," >> $symbols
+		size $obj | sed '1d' | awk '{print $2}' >> $symbols
+	
+		echo "" >> $header
+	else
+		echo "omitting empty file: $resource"
+	fi
+done
+
+cnt=`wc -l $symbols | awk '{print $1}'`
+printf "static int resource_count = $cnt;\n\n" >> $header
+
+echo "static struct resource resources[] = {" >> $header
+awk -F',' '{print "	{" $1 ", " $2 ", " $3 "},"}' < $symbols >> $header
+echo "};" >> $header
+
+ar qc "$archive_path" $workdir/resources/*
+rm -rf $workdir

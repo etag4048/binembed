@@ -1,0 +1,121 @@
+.TH BINEMBED 1
+.SH NAME
+binembed \- Embeds binary data into an executable
+.SH SYNOPSIS
+.B binembed
+[\fB\-h\fR header path] [\fB\-o\fR archive path] file ...
+.SH DESCRIPTION
+A shell script that converts the supplied files to objects using the \fBobjcopy\fR utility.
+Creates an archive and a header file containing resource definitions.
+
+The options are as follows:
+
+\fB-h\fR  Allows to specify the location of the resulting resource definition header.
+
+\fB-o\fR  Allows to specify the location of the resulting archive
+
+If no options are supplied the archive and the header are created in the current
+directory
+
+.SH EXAMPLES
+
+To convert all files present in the directory '~/foo'
+
+.nf
+binembed -o build/resources.a -h my_project/src/resources.h  ~/foo
+.fi
+
+Multiple files or directories can be supplied 
+
+.nf
+binembed -o build/resources.a -h my_project/src/resources.h sample1.wav text1.txt 
+.fi
+
+.SH INTEGRATION EXAMPLE
+Create a resource archive containing some example files:
+
+.nf
+echo Something > text1.txt
+echo "Something else" > text2.txt
+binembed text1.txt text2.txt
+.fi
+
+binembed creates a resource header called 'resources.h' and an archive 'resources.a'
+in the current directory
+
+The resource header must be included in the program. It contains
+an array of resource definitions, one for each file in the archive.
+
+#include "resources.h"
+
+The structure 'resource' is used to represent a resource
+
+.nf
+struct resource {
+	char *data;
+	char *path;
+	uint32_t size;
+};
+.fi
+
+A global 'uint32_t resource_count' contains the
+total amount of resources
+
+The simple for loop below, displays the content of 'text1.txt'
+on stdout
+
+.nf
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "resources.h"
+
+int main(void)
+{
+
+	char *content;
+	int i;
+
+	for (i = 0; i < resource_count; i++) {
+		if (strncmp(resources[i].path, "text1.txt", strlen(resources[i].path)) == 0) {
+
+			content = malloc(resources[i].size + 1);
+			memcpy(content, resources[i].data, resources[i].size);
+			content[resources[i].size] = '\\0';
+
+			fprintf(stdout, "%s", content);
+
+			fflush(stdout);
+			free(content);
+
+			exit(0);
+		}
+	}
+
+	exit(1);
+}
+
+The above program can be compiled like so:
+
+cc example.c resources.a
+
+\'resources.a' must be provided to the linker
+
+.fi
+.SH BUGS
+
+Tested on Ubuntu and OpenBSD, works with GCC or LLVM
+
+1) Needs to be manualy adjusted to generate objects for architectures
+other than amd64.
+
+2) Probably will fail if a source path contains spaces,
+common on macOS... Currently, the work-around is NOT to use spaces in paths.
+
+3) Supplying relative paths containing '..' is not supported.
+
+Please email bug reports and feedback to <erik@tagirov.ch>
+
+.SH SEE ALSO
+objcopy(1), ar(1)
